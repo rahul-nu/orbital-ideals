@@ -1,5 +1,37 @@
 import sage.all
+from copy import deepcopy
 #I belive all equations from extreme rank will have to be used.
+
+n = 4
+k = GF(101) 
+
+varlist = ['dummy']
+for i in range( 1, n + 1):
+    for j in range( i + 1, n + 1):
+        varlist.append('x' + str(i) + str(j))
+
+A = PolynomialRing( k, varlist)
+l = iter(A.gens())
+x = {}
+x[0] = next(l)
+for i in range(1, n + 1):
+    for j in range(i + 1, n+1):
+        x[i,j] = next(l)
+
+full_upper_matrix = matrix( [ x[i,j] if i < j else 0 for j in range( 1, n + 1)] for i in range(1, n + 1))
+
+class RankCondition():
+    def __init__( self, rows, cols, rank):
+        assert len(rows) == len(cols)
+        assert type(rows) == type((1,2))
+        assert type(cols) == type((1,2))
+        self.rows = rows
+        self.cols = cols
+        self.rank = rank
+    
+    def implies( self, other):
+        assert len(self.rows) == len(other.rows)
+        return sum( max( y - x, 0) for x, y in zip( self.rows + self.cols, other.rows + other.cols)) <= other.rank - self.rank 
 
 def outerFunc(N):
     for t in listOfTabToCheck:
@@ -22,26 +54,61 @@ def extremeRanks(t):
         li.append(((0,-i2,n,n),twoRank(i2,n,t)))
     return li
 
-def compare(((a1,b1,c1,d1),r1),((a2,b2,c2,d2),r2)): 
-    #returns (left condition) implies (right condition); hence we want minimal elements
-    return (max(a2-a1,0)+max(b2-b1,0)+max(c2-c1,0)+max(d2-d1,0)<=r2-r1) 
-
-def fromTab(t):
-    n=t.size()
-    M=matrix(9, 9, [0,x12,x13,x14,x15,x16,x17,x18,x19,0,0,x23,x24,x25,x26,x27,x28,x29,0,0,0,x34,x35,x36,x37,x38,x39,0,0,0,0,x45,x46,x47,x48,x49,0,0,0,0,0,x56,x57,x58,x59,0,0,0,0,0,0,x67,x68,x69,0,0,0,0,0,0,0,x78,x79,0,0,0,0,0,0,0,0,x89,0,0,0,0,0,0,0,0,0])
-    M=M[range(n),range(n)]
-    for i in range(n):
-        for j in range(n):
-            if not(colOf(i+1,t)<colOf(j+1,t)): M[i,j]=0
+def generic_matrix_of(tab):
+    n = tab.size()
+    M = deepcopy( full_upper_matrix)
+    for i in range( 1, n + 1):
+        for j in range( i + 1, n + 1):
+            if colOf( i, tab) >= colOf( j, tab):
+                M[i-1, j-1] = 0
     return M
 
-def colOf(i,t): return (t.cells_containing(i)[0][1])
+def colOf( i, t): 
+    return t.cells_containing(i)[0][1]
 
-def actualRank(i1,i2,j1,j2,t): 
-    M=fromTab(t)
-    n=t.size()
-    C=block_matrix([[M[range(i1,n),range(j1)],(M**2)[range(i1,n),range(j2)]],[matrix(n-i2,j1),M[range(i2,n),range(j2)]]])
-    return (rank(C))
+def rank_of_reduced_matrix( kept_rows, kept_cols, tab):
+    assert len(kept_rows) == len(kept_cols)
+    M = generic_matrix_of(t)
+    n = t.size()
+    l = []
+    for i, num_rows in enumerate(kept_rows):
+        if num_rows == 0: continue
+        l.append([]) 
+        for j, num_cols in enumerate(kept_cols):
+            N = M ** ( 1 + j - i) if j >= i else matrix([ [0] * n] * n)
+            l[-1].append( N[ -num_rows:, :num_cols])
+    return rank( block_matrix(l))
+            
+def eq_from_rankCondition( condition, t):
+    M = deepcopy(full_upper_matrix)
+    assert len(condition.rows) < len(t[0])
+    l = []
+    for i, num_rows in enumerate(condition.rows):
+        if num_rows == 0: continue
+        l.append([])
+        for j, num_cols in enumerate(condition.cols):
+            N = M ** ( 1 + j - i) if j >= i else matrix([ [0] * n] * n)
+            l[-1].append( N[ -num_rows:, :num_cols])
+
+    C = block_matrix(l)
+    return Ideal([x[0]]+[ x for x in C.minors( condition.rank + 1) if x != 0 ])
+#    return Ideal(x for x in C.minors( condition.rank + 1) if x != 0)
+
+def conjectured_ideal(tab):
+    n = tab.size()
+    k = len(t[0]) - 1
+    res = []
+    I = Ideal(x[0])
+    for rows in product( *([[0..n]]*k)):
+        for cols in product( *([[0..n]]*k)):
+            print(rows,cols)
+            rank = rank_of_reduced_matrix( rows, cols, tab)
+            c = RankCondition( rows, cols, rank)
+            if not any( x.implies(c) for x in res):
+                res.append(c)
+                I += Ideal(eq_from_rankCondition( c, tab))
+    return Ideal(I.groebner_basis())
+    
 
 def verifyT(t):
     n=t.size()
@@ -57,14 +124,6 @@ def verifyT(t):
         #list.extend([((i1,i2,j1,j2),conjRank(i1,i2,j1,j2,t))])
         if not (rank(C[rows1+rows2,cols1+cols2])==r): return (i1,i2,j1,j2,False)
     return True
-
-def eqFromRank(((a,b,c,d),r),n):
-    #-a (rep. -b) is the number of rows to remove from the top (resp. bottom) row block.
-    #c (rep. d) is the number of columns to keep in the left (resp. right) column block.
-#    M=Mbig[range(d),range(d)]
-    M=Mbig[range(n),range(n)]
-    C=block_matrix([[M[range(-a,d-1),range(c)],(M**2)[range(-a,d-1),range(d)]],[matrix(d-1+b,c),M[range(-b,d-1),range(d)]]])
-    return [x for x in C.minors(r+1) if x!=0]
 
 def conjIdealOf(t): 
     n=t.size()
@@ -108,7 +167,7 @@ def removeFirstColUpto(i,t):
     t=t.to_list()
     l=len(t[0])
     for j in range(l):
-        if ((t[0][j])<=i): t[0][j]=None
+        if ((t[0][j])<=i): t[0][j] = None
 #    while (j<l and t[0][j]<=i):
 #        t[0][j]=None
 #        j=j+1
@@ -130,3 +189,4 @@ def twoRank(i2,j1,t):
     t=t.rectify()
     r=r+rnkTab(t)
     return r
+
